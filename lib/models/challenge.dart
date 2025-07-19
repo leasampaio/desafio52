@@ -1,4 +1,5 @@
 import 'week.dart';
+import 'dart:math';
 
 class Challenge {
   final double goalAmount;
@@ -46,6 +47,7 @@ class Challenge {
     
     for (int i = 1; i <= 52; i++) {
       double amount = i * scaleFactor;
+      amount = amount.roundToDouble();
       weeks.add(Week(
         weekNumber: i,
         amount: amount,
