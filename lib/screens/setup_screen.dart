@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/challenge_service.dart';
-import '../services/notification_service.dart';
 import 'home_screen.dart';
 
 class SetupScreen extends StatefulWidget {
@@ -15,7 +14,7 @@ class _SetupScreenState extends State<SetupScreen> {
   final _goalController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _challengeService = ChallengeService();
-  
+
   bool _isLoading = false;
 
   Future<void> _startChallenge() async {
@@ -26,15 +25,17 @@ class _SetupScreenState extends State<SetupScreen> {
     });
 
     try {
-      final goalAmount = double.parse(_goalController.text.replaceAll(RegExp(r'[^\d,.]'), '').replaceAll(',', '.'));
-      
+      final goalAmount = double.parse(
+        _goalController.text
+            .replaceAll(RegExp(r'[^\d,.]'), '')
+            .replaceAll(',', '.'),
+      );
+
       await _challengeService.createNewChallenge(
         goalAmount: goalAmount,
         goalDescription: _descriptionController.text,
         goalImagePath: null,
       );
-
-      await NotificationService.scheduleWeeklyReminder();
 
       if (mounted) {
         Navigator.of(context).pushReplacement(
@@ -64,10 +65,7 @@ class _SetupScreenState extends State<SetupScreen> {
       appBar: AppBar(
         title: const Text(
           'Configurar Desafio52',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
         backgroundColor: Colors.blue.shade600,
         elevation: 0,
@@ -116,7 +114,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ),
               const SizedBox(height: 30),
-              
+
               Text(
                 'Qual é sua meta financeira?',
                 style: TextStyle(
@@ -126,20 +124,26 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ),
               const SizedBox(height: 10),
-              
+
               TextFormField(
                 controller: _goalController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                   labelText: 'Valor da Meta (R\$)',
                   hintText: 'Ex: 5200,00',
-                  prefixIcon: Icon(Icons.attach_money, color: Colors.blue.shade600),
+                  prefixIcon: Icon(
+                    Icons.attach_money,
+                    color: Colors.blue.shade600,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: Colors.blue.shade600, width: 2),
+                    borderSide: BorderSide(
+                      color: Colors.blue.shade600,
+                      width: 2,
+                    ),
                   ),
                 ),
                 validator: (value) {
@@ -147,7 +151,11 @@ class _SetupScreenState extends State<SetupScreen> {
                     return 'Por favor, insira o valor da meta';
                   }
                   try {
-                    final amount = double.parse(value.replaceAll(RegExp(r'[^\d,.]'), '').replaceAll(',', '.'));
+                    final amount = double.parse(
+                      value
+                          .replaceAll(RegExp(r'[^\d,.]'), '')
+                          .replaceAll(',', '.'),
+                    );
                     if (amount <= 0) {
                       return 'O valor deve ser maior que zero';
                     }
@@ -158,7 +166,7 @@ class _SetupScreenState extends State<SetupScreen> {
                 },
               ),
               const SizedBox(height: 20),
-              
+
               Text(
                 'Descreva seu objetivo',
                 style: TextStyle(
@@ -168,20 +176,27 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ),
               const SizedBox(height: 10),
-              
+
               TextFormField(
                 controller: _descriptionController,
                 maxLines: 3,
                 decoration: InputDecoration(
                   labelText: 'Descrição do Objetivo',
-                  hintText: 'Ex: Viagem para o exterior, compra de um carro, reserva de emergência...',
-                  prefixIcon: Icon(Icons.description, color: Colors.blue.shade600),
+                  hintText:
+                      'Ex: Viagem para o exterior, compra de um carro, reserva de emergência...',
+                  prefixIcon: Icon(
+                    Icons.description,
+                    color: Colors.blue.shade600,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: Colors.blue.shade600, width: 2),
+                    borderSide: BorderSide(
+                      color: Colors.blue.shade600,
+                      width: 2,
+                    ),
                   ),
                 ),
                 validator: (value) {
@@ -191,9 +206,9 @@ class _SetupScreenState extends State<SetupScreen> {
                   return null;
                 },
               ),
-              
+
               const SizedBox(height: 40),
-              
+
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -231,4 +246,4 @@ class _SetupScreenState extends State<SetupScreen> {
     _descriptionController.dispose();
     super.dispose();
   }
-} 
+}

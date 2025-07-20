@@ -13,6 +13,7 @@ O **Desafio52** é um aplicativo que ajuda usuários a criarem um hábito de eco
 - **Cálculo Automático**: O app calcula automaticamente quanto economizar a cada semana
 - **Acompanhamento de Progresso**: Veja seu progresso semanal e total
 - **Marcação de Semanas**: Marque as semanas como concluídas conforme economiza
+- **Edição de Desafio**: Altere sua meta ou descrição a qualquer momento
 - **Reset do Desafio**: Possibilidade de recomeçar o desafio a qualquer momento
 
 ### 🏗️ Arquitetura do Projeto
@@ -27,7 +28,8 @@ lib/
 │   └── notification_service.dart # Serviço de notificações (simplificado)
 ├── screens/
 │   ├── setup_screen.dart   # Tela de configuração inicial
-│   └── home_screen.dart    # Tela principal com progresso
+│   ├── home_screen.dart    # Tela principal com progresso
+│   └── edit_challenge_screen.dart # Tela de edição do desafio
 └── main.dart              # Ponto de entrada do app
 ```
 

@@ -1,0 +1,1708 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
+
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+  static Future<void> initialize() async {
+    try {
+      if (kDebugMode) {
+        print('=== INICIANDO NOTIFICATION SERVICE ===');
+      }
+
+      // Inicializa timezone
+      try {
+        tz.initializeTimeZones();
+        if (kDebugMode) {
+          print('✅ Timezone inicializado com sucesso');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('❌ Erro ao inicializar timezone: $e');
+        }
+      }
+
+      // Configuração para Android
+      const AndroidInitializationSettings initializationSettingsAndroid =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+
+      // Configuração para iOS
+      const DarwinInitializationSettings initializationSettingsIOS =
+          DarwinInitializationSettings(
+            requestAlertPermission: true,
+            requestBadgePermission: true,
+            requestSoundPermission: true,
+          );
+
+      const InitializationSettings initializationSettings =
+          InitializationSettings(
+            android: initializationSettingsAndroid,
+            iOS: initializationSettingsIOS,
+          );
+
+      final initialized = await _flutterLocalNotificationsPlugin.initialize(
+        initializationSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          if (kDebugMode) {
+            print('Notificação clicada: ${response.payload}');
+          }
+        },
+      );
+
+      if (kDebugMode) {
+        print('NotificationService inicializado: $initialized');
+      }
+
+      // Solicita permissões no Android 13+
+      await _requestPermissions();
+
+      // Cria os canais de notificação no Android
+      await _createNotificationChannels();
+
+      // Limpa notificações de teste residuais
+      await cleanTestNotifications();
+
+      if (kDebugMode) {
+        print('✅ NotificationService inicializado completamente');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao inicializar NotificationService: $e');
+      }
+      rethrow;
+    }
+  }
+
+  static Future<void> _createNotificationChannels() async {
+    try {
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
+      if (androidImplementation != null) {
+        // Canal para notificações instantâneas
+        const instantChannel = AndroidNotificationChannel(
+          'instant_notification_channel',
+          'Notificações Instantâneas',
+          description: 'Notificações imediatas do Desafio52',
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+        );
+
+        // Canal para lembretes semanais
+        const weeklyChannel = AndroidNotificationChannel(
+          'weekly_reminder_channel',
+          'Lembretes Semanais',
+          description: 'Notificações semanais para revisar sua meta financeira',
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+        );
+
+        // Canal para lembretes de poupança - CRÍTICO
+        const savingChannel = AndroidNotificationChannel(
+          'saving_reminder_channel',
+          'Lembretes de Poupança',
+          description:
+              'Notificações CRÍTICAS para lembrar de poupar dinheiro semanalmente',
+          importance: Importance.max, // Máxima importância
+          playSound: true,
+          enableVibration: true,
+          enableLights: true,
+        );
+
+        await androidImplementation.createNotificationChannel(instantChannel);
+        await androidImplementation.createNotificationChannel(weeklyChannel);
+        await androidImplementation.createNotificationChannel(savingChannel);
+
+        if (kDebugMode) {
+          print('✅ Canais de notificação criados com sucesso');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao criar canais de notificação: $e');
+      }
+    }
+  }
+
+  static Future<void> _requestPermissions() async {
+    try {
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
+      if (androidImplementation != null) {
+        final granted = await androidImplementation
+            .requestNotificationsPermission();
+        if (kDebugMode) {
+          print('Permissão de notificação concedida: $granted');
+        }
+
+        // Também solicita permissão para alarmes exatos (Android 12+)
+        try {
+          final exactAlarmGranted = await androidImplementation
+              .requestExactAlarmsPermission();
+          if (kDebugMode) {
+            print('Permissão de alarme exato concedida: $exactAlarmGranted');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('Erro ao solicitar permissão de alarme exato: $e');
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Erro ao solicitar permissões: $e');
+      }
+    }
+  }
+
+  static tz.TZDateTime _convertToTZDateTime(DateTime dateTime) {
+    try {
+      // Converte para timezone de São Paulo
+      final location = tz.getLocation('America/Sao_Paulo');
+      return tz.TZDateTime.from(dateTime, location);
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao converter timezone, usando local: $e');
+      }
+      // Fallback para timezone local
+      return tz.TZDateTime.from(dateTime, tz.local);
+    }
+  }
+
+  // Métodos para lembrete de poupança
+  static Future<void> scheduleSavingReminderWithSchedule({
+    required int dayOfWeek, // 1 = Segunda, 2 = Terça, ..., 7 = Domingo
+    required int hour,
+    required int minute,
+  }) async {
+    try {
+      if (kDebugMode) {
+        print('=== INICIANDO AGENDAMENTO DE POUPANÇA ===');
+        print('Dia da semana: $dayOfWeek');
+        print('Hora: $hour');
+        print('Minuto: $minute');
+        print('Data/hora atual: ${DateTime.now()}');
+      }
+
+      // Cancela notificações anteriores
+      await cancelSavingReminder();
+      if (kDebugMode) {
+        print('Notificações anteriores canceladas');
+      }
+
+      // Calcula a próxima data para a notificação
+      final now = DateTime.now();
+      DateTime scheduledDate = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        hour,
+        minute,
+      );
+
+      if (kDebugMode) {
+        print('Data base calculada: $scheduledDate');
+      }
+
+      // Ajusta para o dia da semana correto
+      final currentWeekday = now.weekday; // 1 = Segunda, 7 = Domingo
+      final daysUntilTarget = (dayOfWeek - currentWeekday) % 7;
+
+      if (kDebugMode) {
+        print('Dia da semana atual: $currentWeekday');
+        print('Dias até o target: $daysUntilTarget');
+      }
+
+      if (daysUntilTarget == 0 && now.isAfter(scheduledDate)) {
+        // Se é hoje mas já passou o horário, agenda para próxima semana
+        scheduledDate = scheduledDate.add(const Duration(days: 7));
+        if (kDebugMode) {
+          print('Hoje mas já passou o horário, agendando para próxima semana');
+        }
+      } else if (daysUntilTarget > 0) {
+        // Agenda para o próximo dia da semana
+        scheduledDate = scheduledDate.add(Duration(days: daysUntilTarget));
+        if (kDebugMode) {
+          print('Agendando para o próximo dia da semana');
+        }
+      }
+
+      if (kDebugMode) {
+        print('Data final agendada: $scheduledDate');
+        print('Diferença em relação a agora: ${scheduledDate.difference(now)}');
+      }
+
+      // Configurações mais agressivas para notificações de poupança
+      const AndroidNotificationDetails
+      androidPlatformChannelSpecifics = AndroidNotificationDetails(
+        'saving_reminder_channel',
+        'Lembretes de Poupança',
+        channelDescription:
+            'Notificações CRÍTICAS para lembrar de poupar dinheiro semanalmente',
+        importance: Importance.max, // Máxima importância
+        priority: Priority.max, // Máxima prioridade
+        icon: '@mipmap/ic_launcher',
+        enableVibration: true,
+        playSound: true,
+        autoCancel: false, // Não remove automaticamente
+        category: AndroidNotificationCategory.reminder,
+        visibility: NotificationVisibility.public,
+        ticker: '💰 Hora de Poupar!',
+      );
+
+      const DarwinNotificationDetails iOSPlatformChannelSpecifics =
+          DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          );
+
+      const NotificationDetails platformChannelSpecifics = NotificationDetails(
+        android: androidPlatformChannelSpecifics,
+        iOS: iOSPlatformChannelSpecifics,
+      );
+
+      // Usa modo alarmClock primeiro (mais confiável para poupança)
+      bool scheduled = false;
+
+      if (kDebugMode) {
+        print('Tentando agendar com modo alarmClock...');
+      }
+
+      try {
+        await _flutterLocalNotificationsPlugin.zonedSchedule(
+          1002, // ID diferente do lembrete de meta
+          '💰 Hora de Poupar!',
+          'Não esqueça de separar o dinheiro desta semana para seu desafio!',
+          _convertToTZDateTime(scheduledDate),
+          platformChannelSpecifics,
+          androidScheduleMode:
+              AndroidScheduleMode.alarmClock, // Modo alarme - mais confiável
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+        );
+        scheduled = true;
+        if (kDebugMode) {
+          print(
+            '✅ Lembrete de poupança agendado com modo alarmClock (mais confiável)',
+          );
+          print('ID: 1002');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('❌ Falha com alarmClock: $e');
+          if (e.toString().contains('exact_alarms_not_permitted')) {
+            print('🔐 DIAGNÓSTICO: Permissão de alarme exato não concedida');
+            print(
+              '💡 SUGESTÃO: Vá em Configurações > Apps > Desafio52 > Permissões especiais > Alarmes e lembretes',
+            );
+          }
+          print('Tentando com exactAllowWhileIdle...');
+        }
+
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            1002,
+            '💰 Hora de Poupar!',
+            'Não esqueça de separar o dinheiro desta semana para seu desafio!',
+            _convertToTZDateTime(scheduledDate),
+            platformChannelSpecifics,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          );
+          scheduled = true;
+          if (kDebugMode) {
+            print(
+              '✅ Lembrete de poupança agendado com modo exactAllowWhileIdle',
+            );
+            print('ID: 1002');
+          }
+        } catch (e2) {
+          if (kDebugMode) {
+            print('❌ Falha com exactAllowWhileIdle: $e2');
+            print('Tentando com modo básico...');
+          }
+
+          // Fallback para modo básico sem alarme exato
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            1002,
+            '💰 Hora de Poupar!',
+            'Não esqueça de separar o dinheiro desta semana para seu desafio!',
+            _convertToTZDateTime(scheduledDate),
+            platformChannelSpecifics,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          );
+          scheduled = true;
+          if (kDebugMode) {
+            print(
+              '✅ Lembrete de poupança agendado com modo básico (sem alarme exato)',
+            );
+            print('ID: 1002');
+          }
+        }
+      }
+
+      if (scheduled && kDebugMode) {
+        final days = [
+          'Segunda',
+          'Terça',
+          'Quarta',
+          'Quinta',
+          'Sexta',
+          'Sábado',
+          'Domingo',
+        ];
+        final dayName = days[dayOfWeek - 1];
+        final timeFormatted =
+            '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+        print('=== RESUMO DO AGENDAMENTO ===');
+        print('✅ Lembrete de poupança configurado!');
+        print('📅 Dia: $dayName');
+        print('⏰ Horário: $timeFormatted');
+        print('📆 Próximo lembrete: $scheduledDate');
+        print('🆔 ID da notificação: 1002');
+        print('=================================');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO CRÍTICO ao agendar lembrete de poupança: $e');
+        print('Tipo do erro: ${e.runtimeType}');
+      }
+      // Em caso de erro total, continua sem notificações
+      rethrow;
+    }
+  }
+
+  static Future<void> cancelSavingReminder() async {
+    try {
+      if (kDebugMode) {
+        print('=== CANCELANDO LEMBRETES DE POUPANÇA ===');
+      }
+
+      await _flutterLocalNotificationsPlugin.cancel(
+        1002,
+      ); // Cancela usando o ID específico do lembrete de poupança
+
+      // Remove também todas as notificações de teste residuais
+      await _flutterLocalNotificationsPlugin.cancel(
+        9999,
+      ); // Teste de 5 segundos
+      await _flutterLocalNotificationsPlugin.cancel(8888); // Teste de 1 minuto
+      await _flutterLocalNotificationsPlugin.cancel(
+        7777,
+      ); // Teste de 30 segundos
+      await _flutterLocalNotificationsPlugin.cancel(
+        6666,
+      ); // Teste de 10 segundos
+
+      if (kDebugMode) {
+        print(
+          '✅ Lembretes de poupança cancelados (IDs: 1002, 9999, 8888, 7777, 6666)',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao cancelar lembretes de poupança: $e');
+      }
+    }
+  }
+
+  static Future<void> showInstantNotification({
+    required String title,
+    required String body,
+  }) async {
+    try {
+      const AndroidNotificationDetails androidPlatformChannelSpecifics =
+          AndroidNotificationDetails(
+            'instant_notification_channel',
+            'Notificações Instantâneas',
+            channelDescription: 'Notificações imediatas do Desafio52',
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: '@mipmap/ic_launcher',
+            showWhen: true,
+            when: null,
+            enableVibration: true,
+            playSound: true,
+          );
+
+      const DarwinNotificationDetails iOSPlatformChannelSpecifics =
+          DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          );
+
+      const NotificationDetails platformChannelSpecifics = NotificationDetails(
+        android: androidPlatformChannelSpecifics,
+        iOS: iOSPlatformChannelSpecifics,
+      );
+
+      await _flutterLocalNotificationsPlugin.show(
+        0,
+        title,
+        body,
+        platformChannelSpecifics,
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação instantânea enviada: $title - $body');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao enviar notificação instantânea: $e');
+      }
+    }
+  }
+
+  static Future<void> cancelAllNotifications() async {
+    try {
+      await _flutterLocalNotificationsPlugin.cancelAll();
+      if (kDebugMode) {
+        print('✅ Todas as notificações canceladas');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao cancelar notificações: $e');
+      }
+    }
+  }
+
+  static Future<void> cleanTestNotifications() async {
+    try {
+      // Remove notificações de teste com IDs conhecidos
+      await _flutterLocalNotificationsPlugin.cancel(
+        9999,
+      ); // Teste de 5 segundos
+      await _flutterLocalNotificationsPlugin.cancel(8888); // Teste de 1 minuto
+      await _flutterLocalNotificationsPlugin.cancel(
+        7777,
+      ); // Teste de 30 segundos
+      await _flutterLocalNotificationsPlugin.cancel(
+        6666,
+      ); // Teste de 10 segundos
+      if (kDebugMode) {
+        print(
+          '✅ Todas as notificações de teste removidas (9999, 8888, 7777, 6666)',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao limpar notificações de teste: $e');
+      }
+    }
+  }
+
+  static Future<void> showChallengeCompletedNotification() async {
+    await showInstantNotification(
+      title: 'Parabéns! Desafio52 Concluído! 🎉',
+      body:
+          'Você completou o desafio de 52 semanas! Sua disciplina financeira é incrível!',
+    );
+  }
+
+  static Future<void> showWeekCompletedNotification(
+    int weekNumber,
+    double amount,
+  ) async {
+    await showInstantNotification(
+      title: 'Semana $weekNumber Concluída! ✅',
+      body:
+          'Você economizou R\$ ${amount.toStringAsFixed(2)} esta semana. Continue assim!',
+    );
+  }
+
+  // Método para testar se as notificações estão funcionando
+  static Future<void> testNotifications() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE DE NOTIFICAÇÕES ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      // 1. Teste notificação instantânea
+      await _flutterLocalNotificationsPlugin.show(
+        5555,
+        '🧪 TESTE INSTANTÂNEO',
+        'Se você viu isso, notificações básicas funcionam!',
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'instant_notification_channel',
+            'Notificações Instantâneas',
+            channelDescription: 'Teste instantâneo de notificações',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            showWhen: true,
+          ),
+        ),
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação instantânea enviada');
+      }
+
+      // Aguarda 2 segundos
+      await Future.delayed(const Duration(seconds: 2));
+
+      // 2. Teste notificação agendada para 5 segundos
+      final testDate = DateTime.now().add(const Duration(seconds: 5));
+      
+      // Cancela notificação anterior se existir
+      await _flutterLocalNotificationsPlugin.cancel(4444);
+
+      // Agenda nova notificação
+      await _flutterLocalNotificationsPlugin.zonedSchedule(
+        4444,
+        '⏰ TESTE AGENDADO',
+        'Se você viu isso, agendamento funciona!',
+        _convertToTZDateTime(testDate),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'saving_reminder_channel',
+            'Lembretes de Poupança',
+            channelDescription: 'Teste agendado de notificações',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            showWhen: true,
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação agendada para 5 segundos');
+        print('⏰ Aguarde para confirmar se o agendamento funciona...');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro no teste de notificações: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // Método para testar notificação de poupança
+  static Future<void> testSavingNotification() async {
+      if (kDebugMode) {
+        print('=== TESTE DE NOTIFICAÇÃO DE POUPANÇA ===');
+      }
+
+      // Testa notificação instantânea primeiro
+      await showInstantNotification(
+        title: '💰 TESTE - Hora de Poupar!',
+        body: 'Esta é uma notificação de teste para lembretes de poupança.',
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação instantânea de teste enviada');
+      }
+
+      // Agenda uma notificação de teste para 5 segundos no futuro
+      final testDate = DateTime.now().add(const Duration(seconds: 5));
+
+      const AndroidNotificationDetails
+      androidPlatformChannelSpecifics = AndroidNotificationDetails(
+        'saving_reminder_channel',
+        'Lembretes de Poupança',
+        channelDescription:
+            'Notificações CRÍTICAS para lembrar de poupar dinheiro semanalmente',
+        importance: Importance.max,
+        priority: Priority.max,
+        icon: '@mipmap/ic_launcher',
+        enableVibration: true,
+        playSound: true,
+        autoCancel: false,
+      );
+
+      const NotificationDetails platformChannelSpecifics = NotificationDetails(
+        android: androidPlatformChannelSpecifics,
+      );
+
+      // Tenta agendar uma notificação de teste com fallback
+      bool testScheduled = false;
+      String testMethod = '';
+
+      // Primeiro tenta com alarmClock
+      try {
+        await _flutterLocalNotificationsPlugin.zonedSchedule(
+          9999, // ID especial para teste
+          '💰 TESTE AGENDADO - Poupança (AlarmClock)!',
+          'Se você viu isso, o modo alarmClock está funcionando perfeitamente!',
+          _convertToTZDateTime(testDate),
+          platformChannelSpecifics,
+          androidScheduleMode: AndroidScheduleMode.alarmClock,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+        testScheduled = true;
+        testMethod = 'alarmClock';
+        if (kDebugMode) {
+          print('✅ Teste agendado com sucesso usando alarmClock');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('❌ Falha no teste com alarmClock: $e');
+          print('Tentando teste com modo básico...');
+        }
+
+        // Fallback para modo básico
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            9999,
+            '💰 TESTE AGENDADO - Poupança (Básico)!',
+            'Se você viu isso, o sistema básico está funcionando (precisão limitada)!',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          testScheduled = true;
+          testMethod = 'básico';
+          if (kDebugMode) {
+            print('✅ Teste agendado com sucesso usando modo básico');
+          }
+        } catch (e2) {
+          if (kDebugMode) {
+            print('❌ Falha total no teste: $e2');
+          }
+          rethrow;
+        }
+      }
+
+      if (kDebugMode && testScheduled) {
+        print('=== TESTE CONCLUÍDO ===');
+        print('📅 Data do teste: $testDate');
+        print('🔧 Método usado: $testMethod');
+        print('🆔 ID da notificação: 9999');
+        print('⏱️ Aguarde 5 segundos para ver a notificação...');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro no teste de notificação: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // NOVO MÉTODO: Teste para 1 minuto no futuro - VERSÃO ROBUSTA
+  static Future<void> testSavingIn1Minute() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE DE POUPANÇA EM 1 MINUTO ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      // Cancela qualquer notificação de teste anterior
+      await _flutterLocalNotificationsPlugin.cancel(8888);
+      if (kDebugMode) {
+        print('🗑️ Notificação de teste anterior cancelada (ID: 8888)');
+      }
+
+      // Agenda uma notificação de teste para 1 minuto no futuro
+      final testDate = DateTime.now().add(const Duration(minutes: 1));
+      if (kDebugMode) {
+        print('🎯 Data alvo: $testDate');
+      }
+
+      const AndroidNotificationDetails
+      androidPlatformChannelSpecifics = AndroidNotificationDetails(
+        'saving_reminder_channel',
+        'Lembretes de Poupança',
+        channelDescription:
+            'Notificações CRÍTICAS para lembrar de poupar dinheiro semanalmente',
+        importance: Importance.max,
+        priority: Priority.max,
+        icon: '@mipmap/ic_launcher',
+        enableVibration: true,
+        playSound: true,
+        autoCancel: false,
+        category: AndroidNotificationCategory.alarm,
+        fullScreenIntent: true,
+        visibility: NotificationVisibility.public,
+      );
+
+      const NotificationDetails platformChannelSpecifics = NotificationDetails(
+        android: androidPlatformChannelSpecifics,
+      );
+
+      // Verifica permissões antes de agendar
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
+      bool canScheduleExact = false;
+      if (androidImplementation != null) {
+        try {
+          canScheduleExact =
+              await androidImplementation.canScheduleExactNotifications() ??
+              false;
+          if (kDebugMode) {
+            print('🔐 Pode agendar alarmes exatos: $canScheduleExact');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❓ Não foi possível verificar permissões: $e');
+          }
+        }
+      }
+
+      // Tenta com múltiplos métodos
+      bool scheduled = false;
+      String method = '';
+
+      // Método 1: alarmClock (mais confiável)
+      if (!scheduled) {
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            8888,
+            '🚨 TESTE 1 MINUTO - AlarmClock',
+            'Se você viu isso, o modo alarmClock está funcionando! ${DateTime.now()}',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            androidScheduleMode: AndroidScheduleMode.alarmClock,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          scheduled = true;
+          method = 'alarmClock';
+          if (kDebugMode) {
+            print('✅ Agendado com ALARM CLOCK');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Falha com alarmClock: $e');
+          }
+        }
+      }
+
+      // Método 2: exactAllowWhileIdle
+      if (!scheduled) {
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            8888,
+            '🚨 TESTE 1 MINUTO - ExactAllowWhileIdle',
+            'Se você viu isso, o modo exactAllowWhileIdle está funcionando! ${DateTime.now()}',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          scheduled = true;
+          method = 'exactAllowWhileIdle';
+          if (kDebugMode) {
+            print('✅ Agendado com EXACT ALLOW WHILE IDLE');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Falha com exactAllowWhileIdle: $e');
+          }
+        }
+      }
+
+      // Método 3: básico
+      if (!scheduled) {
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            8888,
+            '🚨 TESTE 1 MINUTO - Básico',
+            'Se você viu isso, o modo básico está funcionando! ${DateTime.now()}',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          scheduled = true;
+          method = 'básico';
+          if (kDebugMode) {
+            print('✅ Agendado com MODO BÁSICO');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Falha total com modo básico: $e');
+          }
+          rethrow;
+        }
+      }
+
+      if (scheduled && kDebugMode) {
+        print('=== TESTE AGENDADO COM SUCESSO ===');
+        print('🆔 ID: 8888');
+        print('⏰ Aguarde 1 minuto...');
+        print('🔧 Método: $method');
+        print('🕐 Hora atual: ${DateTime.now()}');
+        print('🎯 Hora do teste: $testDate');
+        print('🔐 Permissão exata: $canScheduleExact');
+        print('=====================================');
+      }
+
+      // Verifica se foi realmente agendado
+      final pendingNotifications = await _flutterLocalNotificationsPlugin
+          .pendingNotificationRequests();
+      final testNotification = pendingNotifications
+          .where((n) => n.id == 8888)
+          .firstOrNull;
+
+      if (testNotification != null && kDebugMode) {
+        print('✅ CONFIRMADO: Notificação 8888 está na fila!');
+        print('   Título: ${testNotification.title}');
+      } else if (kDebugMode) {
+        print('⚠️ ATENÇÃO: Notificação 8888 não encontrada na fila!');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO CRÍTICO no teste de 1 minuto: $e');
+        print('Tipo: ${e.runtimeType}');
+      }
+      rethrow;
+    }
+  }
+
+  // MÉTODO ADICIONAL: Teste ultra-rápido (30 segundos) - VERSÃO SUPER ROBUSTA
+  static Future<void> testSavingIn30Seconds() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE ULTRA-RÁPIDO EM 30 SEGUNDOS ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      // Cancela qualquer notificação de teste anterior
+      await _flutterLocalNotificationsPlugin.cancel(7777);
+      if (kDebugMode) {
+        print('🗑️ Notificação anterior ID:7777 cancelada');
+      }
+
+      // Agenda uma notificação de teste para 30 segundos no futuro
+      final testDate = DateTime.now().add(const Duration(seconds: 30));
+      if (kDebugMode) {
+        print('🎯 Data alvo: $testDate');
+        print(
+          '⏱️ Diferença: ${testDate.difference(DateTime.now()).inSeconds} segundos',
+        );
+      }
+
+      // Verifica permissões ANTES de tentar agendar
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
+      bool hasExactAlarmPermission = false;
+      if (androidImplementation != null) {
+        try {
+          hasExactAlarmPermission =
+              await androidImplementation.canScheduleExactNotifications() ??
+              false;
+          if (kDebugMode) {
+            print('🔐 Permissão de alarme exato: $hasExactAlarmPermission');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❓ Erro ao verificar permissões: $e');
+          }
+        }
+      }
+
+      // Configuração MÁXIMA de notificação
+      const AndroidNotificationDetails androidPlatformChannelSpecifics =
+          AndroidNotificationDetails(
+            'saving_reminder_channel',
+            'Lembretes de Poupança',
+            channelDescription: 'Teste ultra-rápido de 30 segundos',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            category: AndroidNotificationCategory.alarm,
+            fullScreenIntent: true,
+            visibility: NotificationVisibility.public,
+            ongoing: false,
+            showWhen: true,
+            ticker: '⚡ TESTE 30 SEGUNDOS',
+          );
+
+      const NotificationDetails platformChannelSpecifics = NotificationDetails(
+        android: androidPlatformChannelSpecifics,
+      );
+
+      bool scheduled = false;
+      String method = '';
+
+      // ESTRATÉGIA 1: Se tem permissão, usa alarmClock
+      if (hasExactAlarmPermission) {
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            7777,
+            '⚡ TESTE 30s - ALARME EXATO!',
+            'Funcionou! Alarmes exatos estão ativos! 🎉 ${DateTime.now().millisecondsSinceEpoch}',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            androidScheduleMode: AndroidScheduleMode.alarmClock,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          scheduled = true;
+          method = 'alarmClock';
+          if (kDebugMode) {
+            print('✅ AGENDADO com alarmClock (permissão confirmada)');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Falha com alarmClock: $e');
+          }
+        }
+      }
+
+      // ESTRATÉGIA 2: exactAllowWhileIdle (funciona mesmo sem permissão específica)
+      if (!scheduled) {
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            7777,
+            '⚡ TESTE 30s - EXACT WHILE IDLE!',
+            'Funcionou! ExactAllowWhileIdle ativo! 🎉 ${DateTime.now().millisecondsSinceEpoch}',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          scheduled = true;
+          method = 'exactAllowWhileIdle';
+          if (kDebugMode) {
+            print('✅ AGENDADO com exactAllowWhileIdle');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Falha com exactAllowWhileIdle: $e');
+          }
+        }
+      }
+
+      // ESTRATÉGIA 3: Modo básico (sem precisão garantida)
+      if (!scheduled) {
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            7777,
+            '⚡ TESTE 30s - MODO BÁSICO!',
+            'Funcionou! Modo básico ativo (sem precisão)! 🎉 ${DateTime.now().millisecondsSinceEpoch}',
+            _convertToTZDateTime(testDate),
+            platformChannelSpecifics,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          scheduled = true;
+          method = 'básico';
+          if (kDebugMode) {
+            print('✅ AGENDADO com modo básico');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Falha total com modo básico: $e');
+          }
+          rethrow;
+        }
+      }
+
+      if (scheduled && kDebugMode) {
+        print('=== TESTE AGENDADO COM SUCESSO ===');
+        print('🆔 ID: 7777');
+        print('⏰ Aguarde 30 segundos...');
+        print('🔧 Método: $method');
+        print('🕐 Hora atual: ${DateTime.now()}');
+        print('🎯 Hora do teste: $testDate');
+        print('🔐 Permissão exata: $hasExactAlarmPermission');
+        print('=====================================');
+      }
+
+      // Verifica se foi realmente agendado
+      final pendingNotifications = await _flutterLocalNotificationsPlugin
+          .pendingNotificationRequests();
+      final testNotification = pendingNotifications
+          .where((n) => n.id == 7777)
+          .firstOrNull;
+
+      if (testNotification != null && kDebugMode) {
+        print('✅ CONFIRMADO: Notificação 7777 está na fila!');
+        print('   Título: ${testNotification.title}');
+      } else if (kDebugMode) {
+        print('⚠️ ATENÇÃO: Notificação 7777 não encontrada na fila!');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO CRÍTICO no teste de 30 segundos: $e');
+        print('Tipo: ${e.runtimeType}');
+      }
+      rethrow;
+    }
+  }
+
+  // MÉTODO ALTERNATIVO: Teste com notificação instantânea (sem agendamento)
+  static Future<void> testInstantNotificationOnly() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE APENAS NOTIFICAÇÃO INSTANTÂNEA ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      // Testa canal instantâneo
+      await showInstantNotification(
+        title: '🧪 TESTE INSTANTÂNEO - Canal Básico',
+        body:
+            'Se você viu isso, o canal instantâneo funciona! ${DateTime.now().toString().substring(11, 19)}',
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação instantânea enviada no canal básico');
+      }
+
+      // Aguarda 2 segundos e testa canal de poupança instantaneamente
+      await Future.delayed(const Duration(seconds: 2));
+
+      const AndroidNotificationDetails androidSpecs =
+          AndroidNotificationDetails(
+            'saving_reminder_channel',
+            'Lembretes de Poupança',
+            channelDescription: 'Teste instantâneo no canal de poupança',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            showWhen: true,
+            ticker: '💰 TESTE POUPANÇA',
+          );
+
+      const NotificationDetails specs = NotificationDetails(
+        android: androidSpecs,
+      );
+
+      await _flutterLocalNotificationsPlugin.show(
+        5555, // ID especial para este teste
+        '💰 TESTE INSTANTÂNEO - Canal Poupança',
+        'Se você viu isso, o canal de poupança funciona! ${DateTime.now().toString().substring(11, 19)}',
+        specs,
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação instantânea enviada no canal de poupança');
+        print(
+          '💡 Se ambas apareceram, o problema está no AGENDAMENTO, não nos canais',
+        );
+        print('💡 Se nenhuma apareceu, o problema são as PERMISSÕES BÁSICAS');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO no teste instantâneo: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // MÉTODO EXTREMO: Diagnóstico profundo do sistema Android
+  static Future<void> deepAndroidDiagnostic() async {
+    try {
+      if (kDebugMode) {
+        print('=== DIAGNÓSTICO PROFUNDO DO ANDROID ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
+      if (androidImplementation != null) {
+        // 1. Verifica se notificações básicas estão habilitadas
+        try {
+          final basicEnabled = await androidImplementation
+              .areNotificationsEnabled();
+          if (kDebugMode) {
+            print('📢 Notificações básicas habilitadas: $basicEnabled');
+            if (basicEnabled == false) {
+              print('❌ PROBLEMA CRÍTICO: Notificações básicas DESABILITADAS!');
+              print(
+                '🔧 SOLUÇÃO: Configurações > Apps > Desafio52 > Notificações > ATIVAR',
+              );
+            } else if (basicEnabled == true) {
+              print('✅ Notificações básicas estão ATIVAS');
+            } else {
+              print('❓ Status das notificações básicas indeterminado');
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Erro ao verificar notificações básicas: $e');
+          }
+        }
+
+        // 2. Verifica alarmes exatos
+        try {
+          final exactAlarms = await androidImplementation
+              .canScheduleExactNotifications();
+          if (kDebugMode) {
+            print('⏰ Pode agendar alarmes exatos: $exactAlarms');
+            if (exactAlarms == false) {
+              print('⚠️ Alarmes exatos DESABILITADOS (normal em alguns casos)');
+              print(
+                '💡 Isto pode afetar precisão, mas não deveria impedir notificações',
+              );
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Erro ao verificar alarmes exatos: $e');
+          }
+        }
+
+        // 3. Lista todos os canais criados
+        try {
+          final channels = await androidImplementation
+              .getNotificationChannels();
+          if (kDebugMode) {
+            print(
+              '📺 Canais de notificação encontrados: ${channels?.length ?? 0}',
+            );
+            if (channels != null) {
+              for (final channel in channels) {
+                print(
+                  '   - ${channel.id}: ${channel.name} (Importância: ${channel.importance})',
+                );
+              }
+            } else {
+              print('❌ PROBLEMA: Nenhum canal encontrado!');
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❌ Erro ao listar canais: $e');
+          }
+        }
+
+        // 4. Testa notificação com ID único e timestamp
+        if (kDebugMode) {
+          print('=== TESTE DE NOTIFICAÇÃO FORÇADA ===');
+        }
+
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        const AndroidNotificationDetails forceSpecs =
+            AndroidNotificationDetails(
+              'instant_notification_channel',
+              'Notificações Instantâneas',
+              channelDescription: 'Teste forçado de notificação',
+              importance: Importance.max,
+              priority: Priority.max,
+              icon: '@mipmap/ic_launcher',
+              enableVibration: true,
+              playSound: true,
+              autoCancel: false,
+              showWhen: true,
+              ongoing: false,
+              silent: false,
+            );
+
+        const NotificationDetails forceDetails = NotificationDetails(
+          android: forceSpecs,
+        );
+
+        await _flutterLocalNotificationsPlugin.show(
+          timestamp.abs() % 10000, // ID único baseado no timestamp
+          '🚨 DIAGNÓSTICO FORÇADO',
+          'Teste ${timestamp} - Se você viu isso, notificações instantâneas funcionam!',
+          forceDetails,
+        );
+
+        if (kDebugMode) {
+          print(
+            '✅ Notificação forçada enviada (ID: ${timestamp.abs() % 10000})',
+          );
+        }
+      }
+
+      // 5. Verifica notificações pendentes uma última vez
+      final pending = await _flutterLocalNotificationsPlugin
+          .pendingNotificationRequests();
+      if (kDebugMode) {
+        print('=== NOTIFICAÇÕES PENDENTES ===');
+        print('📱 Total pendentes: ${pending.length}');
+        if (pending.isNotEmpty) {
+          for (final notif in pending) {
+            print('   - ID: ${notif.id}, Título: ${notif.title}');
+          }
+        } else {
+          print(
+            '⚠️ Nenhuma notificação pendente (normal para testes instantâneos)',
+          );
+        }
+      }
+
+      if (kDebugMode) {
+        print('=== RESUMO DO DIAGNÓSTICO ===');
+        print('1. Se a notificação forçada apareceu: O sistema funciona');
+        print('2. Se não apareceu: Problema de permissões ou sistema');
+        print('3. Verifique se DND (Não Perturbar) está desativado');
+        print('4. Verifique se o app não está em modo economia de bateria');
+        print('=====================================');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO CRÍTICO no diagnóstico profundo: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // MÉTODO EMERGENCIAL: Teste super rápido (10 segundos) para debugging
+  static Future<void> testSavingIn10Seconds() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE EMERGENCIAL 10 SEGUNDOS ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      // Cancela testes anteriores
+      await _flutterLocalNotificationsPlugin.cancel(6666);
+
+      // 10 segundos é rápido demais para problemas de permissão
+      final testDate = DateTime.now().add(const Duration(seconds: 10));
+      if (kDebugMode) {
+        print('🎯 Data alvo: $testDate');
+        print(
+          '⚡ Teste em ${testDate.difference(DateTime.now()).inSeconds} segundos',
+        );
+      }
+
+      // Configuração simplificada mas robusta
+      const AndroidNotificationDetails
+      androidSpecs = AndroidNotificationDetails(
+        'instant_notification_channel', // Usa canal instantâneo (mais confiável)
+        'Notificações Instantâneas',
+        channelDescription: 'Teste emergencial de 10 segundos',
+        importance: Importance.max,
+        priority: Priority.max,
+        icon: '@mipmap/ic_launcher',
+        enableVibration: true,
+        playSound: true,
+        autoCancel: false,
+        showWhen: true,
+        ticker: '🚨 TESTE 10s',
+      );
+
+      const NotificationDetails specs = NotificationDetails(
+        android: androidSpecs,
+      );
+
+      // Usa estratégia dupla: exactAllowWhileIdle primeiro (mais compatível)
+      bool success = false;
+
+      try {
+        await _flutterLocalNotificationsPlugin.zonedSchedule(
+          6666,
+          '🚨 TESTE 10s - EMERGENCIAL!',
+          'Se apareceu, o sistema funciona! Hora: ${DateTime.now().toString().substring(11, 19)}',
+          _convertToTZDateTime(testDate),
+          specs,
+          androidScheduleMode:
+              AndroidScheduleMode.exactAllowWhileIdle, // Mais tolerante
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+        success = true;
+        if (kDebugMode) {
+          print('✅ TESTE 10s agendado com exactAllowWhileIdle');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('❌ Falha com exactAllowWhileIdle: $e');
+        }
+
+        // Fallback para modo básico
+        try {
+          await _flutterLocalNotificationsPlugin.zonedSchedule(
+            6666,
+            '🚨 TESTE 10s - BÁSICO!',
+            'Modo básico funcionou! Hora: ${DateTime.now().toString().substring(11, 19)}',
+            _convertToTZDateTime(testDate),
+            specs,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+          );
+          success = true;
+          if (kDebugMode) {
+            print('✅ TESTE 10s agendado com modo básico');
+          }
+        } catch (e2) {
+          if (kDebugMode) {
+            print('❌ FALHA TOTAL no teste 10s: $e2');
+          }
+          rethrow;
+        }
+      }
+
+      if (success && kDebugMode) {
+        print('=== TESTE 10s ATIVO ===');
+        print('🆔 ID: 6666');
+        print('⏰ Aguarde 10 segundos...');
+        print('💡 Mantenha o app aberto por 15 segundos total');
+        print('======================');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO no teste emergencial: $e');
+      }
+      rethrow;
+    }
+  }
+
+  // Método para verificar notificações agendadas - VERSÃO DIAGNÓSTICA COMPLETA
+  static Future<void> checkScheduledNotifications() async {
+    try {
+      if (kDebugMode) {
+        print('=== DIAGNÓSTICO COMPLETO DO SISTEMA ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      final List<PendingNotificationRequest> pendingNotifications =
+          await _flutterLocalNotificationsPlugin.pendingNotificationRequests();
+
+      if (kDebugMode) {
+        print(
+          '📱 Total de notificações pendentes: ${pendingNotifications.length}',
+        );
+
+        if (pendingNotifications.isEmpty) {
+          print('⚠️ Nenhuma notificação agendada encontrada');
+          print('💡 Isso pode significar que:');
+          print('   - As notificações foram canceladas');
+          print('   - Erro ao agendar');
+          print('   - Permissões insuficientes');
+        } else {
+          print('✅ Notificações encontradas:');
+          for (final notification in pendingNotifications) {
+            print('---');
+            print('🆔 ID: ${notification.id}');
+            print('📝 Título: ${notification.title}');
+            print('💬 Corpo: ${notification.body}');
+            if (notification.id == 1002) {
+              print('💰 NOTIFICAÇÃO DE POUPANÇA REAL');
+            } else if (notification.id == 9999) {
+              print('🧪 Teste de 5 segundos');
+            } else if (notification.id == 8888) {
+              print('⏰ Teste de 1 minuto');
+            } else if (notification.id == 7777) {
+              print('⚡ Teste de 30 segundos');
+            }
+          }
+        }
+
+        // Verifica permissões detalhadamente
+        print('=== VERIFICAÇÃO DE PERMISSÕES ===');
+        final androidImplementation = _flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+
+        if (androidImplementation != null) {
+          try {
+            final canScheduleExact = await androidImplementation
+                .canScheduleExactNotifications();
+            print('🔔 Pode agendar notificações exatas: $canScheduleExact');
+
+            if (canScheduleExact == false) {
+              print('❌ PROBLEMA CRÍTICO: Sem permissão para alarmes exatos');
+              print('🔧 SOLUÇÃO DEFINITIVA:');
+              print('   1. Abra Configurações do Android');
+              print('   2. Vá em Apps > Desafio52');
+              print('   3. Permissões especiais > Alarmes e lembretes');
+              print(
+                '   4. Ative "Permitir configuração de alarmes e lembretes"',
+              );
+              print('   5. Teste novamente');
+            } else if (canScheduleExact == true) {
+              print('✅ Permissão para alarmes exatos ATIVA!');
+              print('🎯 Sistema deveria funcionar perfeitamente');
+            } else {
+              print('❓ Status de permissão indeterminado');
+            }
+
+            // Verifica permissões básicas de notificação
+            try {
+              final basicPermission = await androidImplementation
+                  .areNotificationsEnabled();
+              print('📢 Notificações básicas ativadas: $basicPermission');
+            } catch (e) {
+              print('❓ Não foi possível verificar permissões básicas: $e');
+            }
+          } catch (e) {
+            print('❌ Erro ao verificar permissões: $e');
+          }
+        }
+
+        // Verifica timezone
+        print('=== VERIFICAÇÃO DE TIMEZONE ===');
+        try {
+          final now = DateTime.now();
+          final tzNow = _convertToTZDateTime(now);
+          print('🌍 Hora local: $now');
+          print('🕒 Hora com timezone: $tzNow');
+          print('📍 Timezone: ${tzNow.location}');
+        } catch (e) {
+          print('❌ Erro de timezone: $e');
+        }
+
+        // Teste de canal de notificação
+        print('=== TESTE DE CANAL ===');
+        try {
+          await showInstantNotification(
+            title: '🔍 TESTE DE DIAGNÓSTICO',
+            body: 'Se você viu isso, o canal básico funciona!',
+          );
+          print('✅ Teste de canal básico enviado');
+        } catch (e) {
+          print('❌ Erro no teste de canal: $e');
+        }
+
+        print('==============================');
+        print('🏁 DIAGNÓSTICO COMPLETO FINALIZADO');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Erro ao verificar notificações agendadas: $e');
+      }
+    }
+  }
+
+  // MÉTODO DE TESTE DEFINITIVO: Testa instantâneo + agendado para diagnosticar o problema
+  static Future<void> testUltimateNotificationTest() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE DEFINITIVO DE NOTIFICAÇÕES ===');
+        print('🕐 Hora atual: ${DateTime.now()}');
+      }
+
+      // 1. PRIMEIRO: Teste notificação instantânea
+      if (kDebugMode) {
+        print('=== FASE 1: TESTE INSTANTÂNEO ===');
+      }
+
+      await _flutterLocalNotificationsPlugin.show(
+        5555,
+        '🧪 TESTE INSTANTÂNEO',
+        'Se você viu isso, notificações básicas funcionam! ${DateTime.now().toString().substring(11, 19)}',
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'instant_notification_channel',
+            'Notificações Instantâneas',
+            channelDescription: 'Teste instantâneo definitivo',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            showWhen: true,
+          ),
+        ),
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação instantânea enviada (ID: 5555)');
+      }
+
+      // Aguarda 3 segundos
+      await Future.delayed(const Duration(seconds: 3));
+
+      // 2. SEGUNDO: Teste notificação agendada para 5 segundos
+      if (kDebugMode) {
+        print('=== FASE 2: TESTE AGENDADO ===');
+      }
+
+      final testDate = DateTime.now().add(const Duration(seconds: 5));
+      final tzTestDate = _convertToTZDateTime(testDate);
+
+      if (kDebugMode) {
+        print('🎯 Data alvo: $testDate');
+        print('🌍 Data TZ: $tzTestDate');
+        print(
+          '⏱️ Diferença: ${testDate.difference(DateTime.now()).inSeconds} segundos',
+        );
+      }
+
+      // Cancela notificação anterior
+      await _flutterLocalNotificationsPlugin.cancel(4444);
+
+      // Verifica permissões
+      final androidImplementation = _flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+
+      bool canScheduleExact = false;
+      if (androidImplementation != null) {
+        try {
+          canScheduleExact =
+              await androidImplementation.canScheduleExactNotifications() ??
+              false;
+          if (kDebugMode) {
+            print('🔐 Pode agendar alarmes exatos: $canScheduleExact');
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('❓ Erro ao verificar permissões: $e');
+          }
+        }
+      }
+
+      // Tenta agendar notificação
+      await _flutterLocalNotificationsPlugin.zonedSchedule(
+        4444,
+        '⏰ TESTE AGENDADO DEFINITIVO',
+        'Se você viu isso, agendamento funciona! ${DateTime.now().toString().substring(11, 19)}',
+        tzTestDate,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'instant_notification_channel',
+            'Notificações Instantâneas',
+            channelDescription: 'Teste agendado definitivo',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            showWhen: true,
+            ticker: '⏰ TESTE DEFINITIVO',
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+
+      if (kDebugMode) {
+        print('✅ Notificação agendada enviada (ID: 4444)');
+      }
+
+      // 3. TERCEIRO: Verifica se foi realmente agendado
+      final pendingNotifications = await _flutterLocalNotificationsPlugin
+          .pendingNotificationRequests();
+      final testNotification = pendingNotifications
+          .where((n) => n.id == 4444)
+          .firstOrNull;
+
+      if (kDebugMode) {
+        print('=== VERIFICAÇÃO FINAL ===');
+        print(
+          '📱 Total de notificações pendentes: ${pendingNotifications.length}',
+        );
+
+        if (testNotification != null) {
+          print('✅ SUCESSO: Notificação 4444 está na fila!');
+          print('   Título: ${testNotification.title}');
+          print('💡 Aguarde 5 segundos para ver se aparece...');
+        } else {
+          print('❌ PROBLEMA: Notificação 4444 NÃO está na fila!');
+          print('💡 Isso indica falha no agendamento');
+
+          if (!canScheduleExact) {
+            print('🔍 POSSÍVEL CAUSA: Sem permissão para alarmes exatos');
+            print(
+              '🔧 SOLUÇÃO: Vá em Configurações > Apps > Desafio52 > Permissões especiais > Alarmes e lembretes',
+            );
+          } else {
+            print('🔍 POSSÍVEL CAUSA: Limitação do sistema ou plugin');
+          }
+        }
+
+        print('🏁 RESUMO:');
+        print('   - Notificação instantânea: Enviada');
+        print(
+          '   - Notificação agendada: ${testNotification != null ? "Na fila" : "FALHOU"}',
+        );
+        print('   - Permissão alarmes exatos: $canScheduleExact');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO no teste definitivo: $e');
+        print('Tipo: ${e.runtimeType}');
+      }
+      rethrow;
+    }
+  }
+
+  // Teste de agendamento simples para 5 segundos no futuro, sem matchDateTimeComponents
+  static Future<void> testScheduleIn5Seconds() async {
+    try {
+      if (kDebugMode) {
+        print('=== TESTE AGENDAMENTO 5 SEGUNDOS ===');
+        print('🕐 Hora atual: [32m[1m${DateTime.now()}[0m');
+      }
+      final testDate = DateTime.now().add(const Duration(seconds: 5));
+      const AndroidNotificationDetails androidSpecs =
+          AndroidNotificationDetails(
+            'instant_notification_channel',
+            'Notificações Instantâneas',
+            channelDescription: 'Teste agendado para 5 segundos',
+            importance: Importance.max,
+            priority: Priority.max,
+            icon: '@mipmap/ic_launcher',
+            enableVibration: true,
+            playSound: true,
+            autoCancel: false,
+            showWhen: true,
+            ticker: '⏰ TESTE 5s',
+          );
+      const NotificationDetails specs = NotificationDetails(
+        android: androidSpecs,
+      );
+
+      await _flutterLocalNotificationsPlugin.zonedSchedule(
+        4444,
+        '⏰ TESTE AGENDADO 5s',
+        'Se você viu isso, o agendamento simples funciona! ${DateTime.now().toString().substring(11, 19)}',
+        _convertToTZDateTime(testDate),
+        specs,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        // NÃO usar matchDateTimeComponents
+      );
+      if (kDebugMode) {
+        print('✅ TESTE AGENDADO para 5 segundos no futuro');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ ERRO no teste agendado 5s: $e');
+      }
+      rethrow;
+    }
+  }
+}

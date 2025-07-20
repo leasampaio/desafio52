@@ -1,7 +1,10 @@
 import 'package:desafio52/screens/home_screen.dart';
+import 'package:desafio52/services/notification_service.dart';
 import 'package:flutter/material.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
   runApp(const MyApp());
 }
 

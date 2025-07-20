@@ -1,5 +1,4 @@
 import '../models/challenge.dart';
-import '../models/week.dart';
 
 class ChallengeService {
   static Challenge? _currentChallenge;
@@ -18,8 +17,14 @@ class ChallengeService {
     return _hasActiveChallenge;
   }
 
-  Future<void> updateWeek(Challenge challenge, int weekNumber, bool isCompleted) async {
-    final weekIndex = challenge.weeks.indexWhere((week) => week.weekNumber == weekNumber);
+  Future<void> updateWeek(
+    Challenge challenge,
+    int weekNumber,
+    bool isCompleted,
+  ) async {
+    final weekIndex = challenge.weeks.indexWhere(
+      (week) => week.weekNumber == weekNumber,
+    );
     if (weekIndex != -1) {
       challenge.weeks[weekIndex] = challenge.weeks[weekIndex].copyWith(
         isCompleted: isCompleted,
@@ -46,7 +51,7 @@ class ChallengeService {
       goalImagePath: goalImagePath,
       goalDescription: goalDescription,
     );
-    
+
     await saveChallenge(challenge);
     return challenge;
   }
@@ -55,4 +60,8 @@ class ChallengeService {
     final updatedChallenge = challenge.copyWith(goalImagePath: imagePath);
     await saveChallenge(updatedChallenge);
   }
-} 
+
+  Future<void> updateChallenge(Challenge updatedChallenge) async {
+    await saveChallenge(updatedChallenge);
+  }
+}
