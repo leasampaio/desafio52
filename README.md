@@ -60,7 +60,7 @@ O app usa uma progressão crescente baseada na meta definida:
 
 2. **Instalação**:
    ```bash
-   git clone [seu-repositorio]
+   git clone https://github.com/leasampaio/desafio52
    cd desafio52
    flutter pub get
    flutter run
@@ -139,9 +139,6 @@ Este projeto demonstra:
 - Arquitetura MVC/Service
 - Interface responsiva
 
-### 📱 Screenshots
-
-_[Aqui você pode adicionar screenshots do app funcionando]_
 
 ### 👥 Contribuição
 
